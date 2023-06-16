@@ -205,16 +205,14 @@ impl PixelFormat for RGBPixel {
                         // In this case, we can actually fill 8 pixels in one iteration with
                         // only 3 movq instructions.
                         // TODO: Consider using AVX instructions when possible
-                        let ptr = p as *mut [u8; 24] as *mut u64;
+                        let ptr = p as *mut [u8; 24] as *mut [u64; 3];
                         unsafe {
-                            let [d1, d2, d3]: [u64; 3] = std::mem::transmute([
+                            let d: [u64; 3] = std::mem::transmute([
                                 r, g, b, r, g, b, r, g, // QW1
                                 b, r, g, b, r, g, b, r, // QW2
                                 g, b, r, g, b, r, g, b, // QW3
                             ]);
-                            ptr.write_unaligned(d1);
-                            ptr.offset(1).write_unaligned(d2);
-                            ptr.offset(2).write_unaligned(d3);
+                            ptr.write(d);
                         }
                     }
 
