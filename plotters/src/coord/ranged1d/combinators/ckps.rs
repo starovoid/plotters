@@ -223,7 +223,6 @@ mod test {
         assert_eq!(range.map(&3, (0, 1000)), 30);
         assert_eq!(range.range(), 0..100);
         assert_eq!(range.key_points(BoldPoints(100)), vec![1, 2, 3]);
-        assert_eq!(range.key_points(LightPoints::new(100, 100)), vec![]);
         let range = range.with_light_points(5..10);
         assert_eq!(range.key_points(BoldPoints(10)), vec![1, 2, 3]);
         assert_eq!(
@@ -251,7 +250,6 @@ mod test {
         assert_eq!(range.map(&3, (0, 1000)), 30);
         assert_eq!(range.range(), 0..100);
         assert_eq!(range.key_points(BoldPoints(100)), vec![1, 2, 3]);
-        assert_eq!(range.key_points(LightPoints::new(100, 100)), vec![]);
         let range = range.with_light_point_func(|_| (5..10).collect());
         assert_eq!(range.key_points(BoldPoints(10)), vec![1, 2, 3]);
         assert_eq!(

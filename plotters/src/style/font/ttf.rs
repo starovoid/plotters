@@ -14,8 +14,8 @@ use font_kit::{
     handle::Handle,
     hinting::HintingOptions,
     properties::{Properties, Style, Weight},
+    loader::Loader,
 };
-use font_kit::loader::Loader;
 
 use ttf_parser::{Face, GlyphId};
 
@@ -159,7 +159,38 @@ fn load_font_data(face: FontFamily, style: FontStyle) -> FontResult<FontExt> {
     let make_not_found_error =
         || FontError::NoSuchFont(face.as_str().to_owned(), style.as_str().to_owned());
 
-    Err(make_not_found_error())
+    /*if let Ok(handle) = FONT_SOURCE
+        .with(|source| source.select_best_match(&[family, FamilyName::SansSerif], &properties))
+    {
+        let font = handle
+            .load()
+            .map(FontExt::new)
+            .map_err(|e| FontError::FontLoadError(Arc::new(e)));
+        let (should_cache, data) = match font.as_ref().map(|f| f.handle()) {
+            Ok(None) => (false, Err(FontError::LockError)),
+            Ok(Some(handle)) => (true, Ok(handle)),
+            Err(e) => (true, Err(e.clone())),
+        };
+
+        if should_cache {
+            DATA_CACHE
+                .write()
+                .map_err(|_| FontError::LockError)?
+                .insert(key.clone().into_owned(), data);
+        }
+
+        if let Ok(font) = font.as_ref() {
+            FONT_OBJECT_CACHE.with(|font_object_cache| {
+                font_object_cache
+                    .borrow_mut()
+                    .insert(key.into_owned(), font.clone());
+            });
+        }
+
+        return font;
+    }*/
+    Font::from_bytes(Arc::new(Vec::new()), 0).map(FontExt::new)
+        .map_err(|e| FontError::FontLoadError(Arc::new(e)))
 }
 
 #[derive(Clone)]
