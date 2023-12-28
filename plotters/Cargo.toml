@@ -15,6 +15,7 @@ exclude = ["doc-template", "plotters-doc-data"]
 [dependencies]
 num-traits = "0.2.14"
 chrono = { version = "0.4.20", optional = true }
+fontdue = "0.8.0"
 
 [dependencies.plotters-backend]
 version = "0.3.5"
@@ -35,7 +36,7 @@ path = "../plotters-svg"
 ttf-parser = { version = "0.17.0", optional = true }
 lazy_static = { version = "1.4.0", optional = true }
 pathfinder_geometry = { version = "0.5.1", optional = true }
-font-kit = { path="/home/starovoid/work/font-kit", optional = true }
+#font-kit = { path="/home/starovoid/work/font-kit", optional = true }
 ab_glyph = { version = "0.2.12", optional = true }
 once_cell = { version = "1.8.0", optional = true }
 
@@ -99,7 +100,7 @@ point_series = []
 surface_series = []
 
 # Font implementation
-ttf = ["font-kit", "ttf-parser", "lazy_static", "pathfinder_geometry"]
+ttf = ["ttf-parser", "lazy_static", "pathfinder_geometry"]
 # dlopen fontconfig C library at runtime instead of linking at build time
 # Can be useful for cross compiling, especially considering fontconfig has lots of C dependencies
 
