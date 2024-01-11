@@ -148,11 +148,25 @@ fn join_gray_glyphs(
     let mut max_liftup = 0i32;
 
     for (bm, bearing) in glyphs.iter() {
-        target_height = target_height.max(bm.height as usize);
+        target_height = target_height
+            .max(bm.height as usize)
+            .max((*bearing).max(0) as usize);
         target_width += bm.width as usize;
         max_bearing = max_bearing.max(*bearing);
-        max_liftup = max_liftup.max((bm.height as i32 - bearing).max(0));
+        max_liftup = max_liftup.max((bm.height as i32 - bearing).abs());
     }
+
+    let calc_liftup = |height: i32, bearing: i32| {
+        if bearing < height {
+            if bearing < 0 {
+                max_liftup - bearing + height
+            } else {
+                max_liftup + bearing - height
+            }
+        } else {
+            max_liftup + height - bearing
+        }
+    };
 
     target_height += max_liftup as usize;
 
@@ -165,23 +179,19 @@ fn join_gray_glyphs(
     let mut pixel_streams: Vec<_> = glyphs
         .iter()
         .map(|(img, bearing)| {
-            img.data.iter().chain(repeat(&0u8).take(
-                (img.width as usize) * ((max_liftup + *bearing - img.height as i32) as usize),
-            ))
+            let liftup = calc_liftup(img.height as i32, *bearing) as usize;
+            repeat(&0u8)
+                .take(img.width * (target_height - liftup - img.height))
+                .chain(img.data.iter())
+                .chain(repeat(&0u8).take(img.width * liftup))
         })
         .collect();
 
-    for row in 0..target_height {
+    for _row in 0..target_height {
         for (i, ps) in pixel_streams.iter_mut().enumerate() {
-            let height = glyphs[i].0.height as usize;
             let width = glyphs[i].0.width as usize;
-            let liftup = (max_liftup + glyphs[i].1 - height as i32).max(0) as usize;
 
-            if row < target_height - height - liftup {
-                encoded_image.extend(std::iter::repeat(0u8).take(width));
-            } else {
-                encoded_image.extend(ps.take(width));
-            }
+            encoded_image.extend(ps.take(width));
 
             // Adding a space gap after the character.
             if i + 1 != glyphs.len() {
@@ -210,7 +220,7 @@ fn render_chars(font: &FontExt, text: &str, font_size: f32) -> Result<Vec<(GrayI
 
     for c in text.chars() {
         if c == ' ' {
-            glyphs.push((space.clone(), 1));
+            glyphs.push((space.clone(), -font_size as i32));
         } else {
             glyphs.push(render_single_char(c, font, font_size)?);
         }
@@ -222,17 +232,13 @@ fn render_chars(font: &FontExt, text: &str, font_size: f32) -> Result<Vec<(GrayI
 /// Render a `char` to `image::GrayImage`. Also returns y-bearing.
 fn render_single_char(c: char, font: &FontExt, font_size: f32) -> Result<(GrayImage, i32), ()> {
     let (metrics, bitmap) = font.rasterize(c, font_size);
-    println!(
-        "bearing of '{c}': {}, height: {}",
-        metrics.height as i32 - metrics.ymin,
-        metrics.height
-    );
 
     let img = GrayImage {
         width: metrics.width,
         height: metrics.height,
         data: bitmap,
     };
+
     Ok((img, metrics.height as i32 - metrics.ymin))
 }
 
@@ -255,7 +261,7 @@ struct GrayImage {
 }
 
 /// Print to the terminal for debugging.
-pub fn print_gray_image(bm: &GrayImage) {
+fn print_gray_image(bm: &GrayImage) {
     println!("y_size: {}, x_size: {}", bm.height, bm.width);
     for i in 0..bm.height as usize {
         for j in 0..bm.width as usize {
