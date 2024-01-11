@@ -82,23 +82,28 @@ impl FontData for FontDataInternal {
 
     fn estimate_layout(&self, size: f64, text: &str) -> Result<LayoutBox, Self::ErrorType> {
         let font = &self.0;
-        let pixels_per_em = size as f32 / 1.24;
+        let em = size as f32 / 1.24;
 
-        let kern = render_single_char('.', font, size as f32)
+        let kern = render_single_char('.', font, em)
             .map_err(|_| FontError::GlyphError)?
             .0
             .width
             / 2;
 
-        let mut x_in_unit = (kern * text.len()) as f32;
+        let mut x_pixels = (kern * (text.len().max(1) - 1)) as i32;
+        let mut y_pixels = 0;
         for c in text.chars() {
-            let metrics = font.metrics(c, size as f32);
-            x_in_unit += metrics.advance_width;
+            let metrics = if c == ' ' {
+                font.metrics('_', em)
+            } else {
+                font.metrics(c, em)
+            };
+
+            x_pixels += metrics.width as i32;
+            y_pixels = y_pixels.max(metrics.height as i32);
         }
 
-        let x_pixels = x_in_unit * pixels_per_em / font.units_per_em();
-
-        Ok(((0, 0), (x_pixels as i32, pixels_per_em as i32)))
+        Ok(((0, 0), (x_pixels, y_pixels)))
     }
 
     fn draw<E, DrawFunc: FnMut(i32, i32, f32) -> Result<(), E>>(
@@ -109,7 +114,6 @@ impl FontData for FontDataInternal {
         mut draw: DrawFunc,
     ) -> Result<Result<(), E>, Self::ErrorType> {
         let em = (size / 1.24) as f32;
-        println!("em: {:?}", em);
         let font = &self.0;
         base_y -= (0.24 * em) as i32;
 
@@ -120,7 +124,7 @@ impl FontData for FontDataInternal {
         for dy in 0..rendered.height as usize {
             for dx in 0..rendered.width as usize {
                 let alpha = rendered.data[dy * rendered.width + dx] as f32 / 255.0;
-                if let Err(e) = draw(base_x + dx as i32, base_y + dy as i32, alpha) {
+                if let Err(e) = draw(base_x + dx as i32, base_y + dy as i32 + 2, alpha) {
                     return Ok(Err(e));
                 }
             }
@@ -172,7 +176,7 @@ fn join_gray_glyphs(
 
     // The space between the characters will be half a dot wide.
     let dot_glyph = render_single_char('.', font, font_size)?;
-    let gapsize = (dot_glyph.0.width as f64 / 2.0).ceil() as usize;
+    let gapsize = dot_glyph.0.width / 2;
     target_width += gapsize * (glyphs.len() - 1);
 
     let mut encoded_image = Vec::with_capacity(target_width * target_height);
