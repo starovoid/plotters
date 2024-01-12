@@ -84,22 +84,18 @@ impl FontData for FontDataInternal {
         let font = &self.0;
         let em = size as f32 / 1.24;
 
-        let kern = render_single_char('.', font, em)
-            .map_err(|_| FontError::GlyphError)?
-            .0
-            .width
-            / 2;
+        let kern = font.metrics('.', em).width as i32 / 3;
 
-        let mut x_pixels = (kern * (text.len().max(1) - 1)) as i32;
+        let mut x_pixels = kern * (text.len().max(1) as i32 - 1);
         let mut y_pixels = 0;
-        for c in text.chars() {
-            let metrics = if c == ' ' {
-                font.metrics('_', em)
-            } else {
-                font.metrics(c, em)
-            };
 
-            x_pixels += metrics.width as i32;
+        for c in text.chars() {
+            let metrics = font.metrics(c, em);
+            if c == ' ' {
+                x_pixels += metrics.advance_width as i32;
+            } else {
+                x_pixels += metrics.width as i32;
+            }
             y_pixels = y_pixels.max(metrics.height as i32);
         }
 
@@ -119,7 +115,6 @@ impl FontData for FontDataInternal {
 
         let (rendered, _bearing) =
             render_text(text, font, em).map_err(|_| FontError::GlyphError)?;
-        print_gray_image(&rendered);
 
         for dy in 0..rendered.height as usize {
             for dx in 0..rendered.width as usize {
@@ -176,7 +171,7 @@ fn join_gray_glyphs(
 
     // The space between the characters will be half a dot wide.
     let dot_glyph = render_single_char('.', font, font_size)?;
-    let gapsize = dot_glyph.0.width / 2;
+    let gapsize = dot_glyph.0.width / 3;
     target_width += gapsize * (glyphs.len() - 1);
 
     let mut encoded_image = Vec::with_capacity(target_width * target_height);
@@ -185,7 +180,7 @@ fn join_gray_glyphs(
         .map(|(img, bearing)| {
             let liftup = calc_liftup(img.height as i32, *bearing) as usize;
             repeat(&0u8)
-                .take(img.width * (target_height - liftup - img.height))
+                .take(img.width * (target_height.max(liftup + img.height) - liftup - img.height))
                 .chain(img.data.iter())
                 .chain(repeat(&0u8).take(img.width * liftup))
         })
@@ -248,12 +243,12 @@ fn render_single_char(c: char, font: &FontExt, font_size: f32) -> Result<(GrayIm
 
 /// The space glyph in gray-8 format.
 fn space_gray_image(font: &FontExt, font_size: f32) -> Result<GrayImage, ()> {
-    let glyph = render_single_char('_', font, font_size)?.0;
+    let metrics = font.metrics(' ', font_size);
 
     Ok(GrayImage {
-        width: glyph.width,
-        height: glyph.height,
-        data: vec![0; glyph.width],
+        width: metrics.advance_width as usize,
+        height: 1,
+        data: vec![0; metrics.advance_width as usize],
     })
 }
 
