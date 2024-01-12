@@ -3,11 +3,14 @@ use fontdue::{Font, FontSettings};
 use ttf_parser::Face;
 
 use super::{FontData, FontFamily, FontStyle, LayoutBox};
-use std::iter::repeat;
+use std::{cell::RefCell, collections::HashMap, iter::repeat};
 
 static ARIAL: &'static [u8] = include_bytes!("Arial_regular.ttf");
 
-type FontResult<T> = Result<T, FontError>;
+thread_local! {
+    /// Cache of glyphs by character and text size.
+    static GLYPH_CACHE: RefCell<HashMap<(char, i32), (GrayImage, i32)>> = RefCell::new(HashMap::new());
+}
 
 #[derive(Debug, Clone)]
 pub enum FontError {
@@ -31,8 +34,6 @@ impl std::fmt::Display for FontError {
 }
 
 impl std::error::Error for FontError {}
-
-const PLACEHOLDER_CHAR: char = '�';
 
 #[derive(Clone)]
 struct FontExt {
@@ -217,12 +218,17 @@ fn render_chars(font: &FontExt, text: &str, font_size: f32) -> Result<Vec<(GrayI
     let mut glyphs = Vec::with_capacity(text.chars().count());
     let space = space_gray_image(font, font_size)?;
 
+    let contains_space =
+        GLYPH_CACHE.with(|cache| cache.borrow().contains_key(&(' ', font_size as i32)));
+
+    if !contains_space {
+        GLYPH_CACHE.with_borrow_mut(|cache| {
+            cache.insert((' ', font_size as i32), (space, -font_size as i32))
+        });
+    }
+
     for c in text.chars() {
-        if c == ' ' {
-            glyphs.push((space.clone(), -font_size as i32));
-        } else {
-            glyphs.push(render_single_char(c, font, font_size)?);
-        }
+        glyphs.push(render_single_char(c, font, font_size)?);
     }
 
     Ok(glyphs)
@@ -230,6 +236,10 @@ fn render_chars(font: &FontExt, text: &str, font_size: f32) -> Result<Vec<(GrayI
 
 /// Render a `char` to `image::GrayImage`. Also returns y-bearing.
 fn render_single_char(c: char, font: &FontExt, font_size: f32) -> Result<(GrayImage, i32), ()> {
+    if let Some(g) = GLYPH_CACHE.with(|cache| cache.borrow().get(&(c, font_size as i32)).cloned()) {
+        return Ok(g);
+    }
+
     let (metrics, bitmap) = font.rasterize(c, font_size);
 
     let img = GrayImage {
@@ -237,6 +247,13 @@ fn render_single_char(c: char, font: &FontExt, font_size: f32) -> Result<(GrayIm
         height: metrics.height,
         data: bitmap,
     };
+
+    GLYPH_CACHE.with_borrow_mut(|cache| {
+        cache.insert(
+            (c, font_size as i32),
+            (img.clone(), metrics.height as i32 - metrics.ymin),
+        )
+    });
 
     Ok((img, metrics.height as i32 - metrics.ymin))
 }
