@@ -173,7 +173,7 @@ fn join_gray_glyphs(
     // The space between the characters will be half a dot wide.
     let dot_glyph = render_single_char('.', font, font_size)?;
     let gapsize = dot_glyph.0.width / 3;
-    target_width += gapsize * (glyphs.len() - 1);
+    target_width += gapsize * (glyphs.len().max(1) - 1);
 
     let mut encoded_image = Vec::with_capacity(target_width * target_height);
     let mut pixel_streams: Vec<_> = glyphs
