@@ -9,7 +9,7 @@ static ARIAL: &'static [u8] = include_bytes!("Arial_regular.ttf");
 
 thread_local! {
     /// Cache of glyphs by character and text size.
-    static GLYPH_CACHE: RefCell<HashMap<(char, i32), (GrayImage, i32)>> = RefCell::new(HashMap::new());
+    static GLYPH_CACHE: RefCell<HashMap<(char, i32), (char, GrayImage, i32)>> = RefCell::new(HashMap::new());
 }
 
 #[derive(Debug, Clone)]
@@ -137,7 +137,7 @@ fn render_text(text: &str, font: &FontExt, font_size: f32) -> Result<(GrayImage,
 
 /// Join grayscale glyph images into one image.
 fn join_gray_glyphs(
-    glyphs: Vec<(GrayImage, i32)>,
+    glyphs: Vec<(char, GrayImage, i32)>,
     font: &FontExt,
     font_size: f32,
 ) -> Result<(GrayImage, i32), ()> {
@@ -147,7 +147,7 @@ fn join_gray_glyphs(
     let mut max_bearing = 0i32;
     let mut max_liftup = 0i32;
 
-    for (bm, bearing) in glyphs.iter() {
+    for (_c, bm, bearing) in glyphs.iter() {
         target_height = target_height
             .max(bm.height as usize)
             .max((*bearing).max(0) as usize);
@@ -156,8 +156,12 @@ fn join_gray_glyphs(
         max_liftup = max_liftup.max((bm.height as i32 - bearing).abs());
     }
 
-    let calc_liftup = |height: i32, bearing: i32| {
-        if bearing < height {
+    target_height += max_liftup as usize;
+
+    let calc_liftup = |ch: char, height: i32, bearing: i32| {
+        if ch == '-' {
+            target_height as i32 / 2 - height + 1
+        } else if bearing < height {
             if bearing < 0 {
                 max_liftup - bearing + height
             } else {
@@ -168,18 +172,16 @@ fn join_gray_glyphs(
         }
     };
 
-    target_height += max_liftup as usize;
-
     // The space between the characters will be half a dot wide.
     let dot_glyph = render_single_char('.', font, font_size)?;
-    let gapsize = dot_glyph.0.width / 3;
+    let gapsize = dot_glyph.1.width / 3;
     target_width += gapsize * (glyphs.len().max(1) - 1);
 
     let mut encoded_image = Vec::with_capacity(target_width * target_height);
     let mut pixel_streams: Vec<_> = glyphs
         .iter()
-        .map(|(img, bearing)| {
-            let liftup = calc_liftup(img.height as i32, *bearing) as usize;
+        .map(|(c, img, bearing)| {
+            let liftup = calc_liftup(*c, img.height as i32, *bearing) as usize;
             repeat(&0u8)
                 .take(img.width * (target_height.max(liftup + img.height) - liftup - img.height))
                 .chain(img.data.iter())
@@ -189,7 +191,7 @@ fn join_gray_glyphs(
 
     for _row in 0..target_height {
         for (i, ps) in pixel_streams.iter_mut().enumerate() {
-            let width = glyphs[i].0.width as usize;
+            let width = glyphs[i].1.width as usize;
 
             encoded_image.extend(ps.take(width));
 
@@ -214,7 +216,11 @@ fn join_gray_glyphs(
 }
 
 /// Get bitmap glyphs of each character of the text.
-fn render_chars(font: &FontExt, text: &str, font_size: f32) -> Result<Vec<(GrayImage, i32)>, ()> {
+fn render_chars(
+    font: &FontExt,
+    text: &str,
+    font_size: f32,
+) -> Result<Vec<(char, GrayImage, i32)>, ()> {
     let mut glyphs = Vec::with_capacity(text.chars().count());
     let space = space_gray_image(font, font_size)?;
 
@@ -223,7 +229,7 @@ fn render_chars(font: &FontExt, text: &str, font_size: f32) -> Result<Vec<(GrayI
 
     if !contains_space {
         GLYPH_CACHE.with_borrow_mut(|cache| {
-            cache.insert((' ', font_size as i32), (space, -font_size as i32))
+            cache.insert((' ', font_size as i32), (' ', space, -font_size as i32))
         });
     }
 
@@ -235,7 +241,11 @@ fn render_chars(font: &FontExt, text: &str, font_size: f32) -> Result<Vec<(GrayI
 }
 
 /// Render a `char` to `image::GrayImage`. Also returns y-bearing.
-fn render_single_char(c: char, font: &FontExt, font_size: f32) -> Result<(GrayImage, i32), ()> {
+fn render_single_char(
+    c: char,
+    font: &FontExt,
+    font_size: f32,
+) -> Result<(char, GrayImage, i32), ()> {
     if let Some(g) = GLYPH_CACHE.with(|cache| cache.borrow().get(&(c, font_size as i32)).cloned()) {
         return Ok(g);
     }
@@ -251,11 +261,11 @@ fn render_single_char(c: char, font: &FontExt, font_size: f32) -> Result<(GrayIm
     GLYPH_CACHE.with_borrow_mut(|cache| {
         cache.insert(
             (c, font_size as i32),
-            (img.clone(), metrics.height as i32 - metrics.ymin),
+            (c, img.clone(), metrics.height as i32 - metrics.ymin),
         )
     });
 
-    Ok((img, metrics.height as i32 - metrics.ymin))
+    Ok((c, img, metrics.height as i32 - metrics.ymin))
 }
 
 /// The space glyph in gray-8 format.
@@ -277,6 +287,7 @@ struct GrayImage {
 }
 
 /// Print to the terminal for debugging.
+#[allow(unused)]
 fn print_gray_image(bm: &GrayImage) {
     println!("y_size: {}, x_size: {}", bm.height, bm.width);
     for i in 0..bm.height as usize {
