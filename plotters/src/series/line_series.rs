@@ -1,6 +1,8 @@
-use crate::element::{Circle, DynElement, IntoDynElement, PathElement};
-use crate::style::ShapeStyle;
-use plotters_backend::DrawingBackend;
+use crate::element::{
+    Circle, DashedPathElement, DottedPathElement, DynElement, IntoDynElement, PathElement,
+};
+use crate::style::{ShapeStyle, SizeDesc};
+use plotters_backend::{BackendCoord, DrawingBackend};
 use std::marker::PhantomData;
 
 /**
@@ -84,6 +86,93 @@ impl<DB: DrawingBackend, Coord> LineSeries<DB, Coord> {
     }
 }
 
+/// A dashed line series, map an iterable object to the dashed line element.
+pub struct DashedLineSeries<I: Iterator + Clone, Size: SizeDesc> {
+    points: I,
+    size: Size,
+    spacing: Size,
+    style: ShapeStyle,
+}
+
+impl<I: Iterator + Clone, Size: SizeDesc> DashedLineSeries<I, Size> {
+    /// Create a new line series from
+    /// - `points`: The iterator of the points
+    /// - `size`: The dash size
+    /// - `spacing`: The dash-to-dash spacing (gap size)
+    /// - `style`: The shape style
+    /// - returns the created element
+    pub fn new<I0>(points: I0, size: Size, spacing: Size, style: ShapeStyle) -> Self
+    where
+        I0: IntoIterator<IntoIter = I>,
+    {
+        Self {
+            points: points.into_iter(),
+            size,
+            spacing,
+            style,
+        }
+    }
+}
+
+impl<I: Iterator + Clone, Size: SizeDesc> IntoIterator for DashedLineSeries<I, Size> {
+    type Item = DashedPathElement<I, Size>;
+    type IntoIter = std::iter::Once<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        std::iter::once(DashedPathElement::new(
+            self.points,
+            self.size,
+            self.spacing,
+            self.style,
+        ))
+    }
+}
+
+/// A dotted line series, map an iterable object to the dotted line element.
+pub struct DottedLineSeries<I: Iterator + Clone, Size: SizeDesc, Marker> {
+    points: I,
+    shift: Size,
+    spacing: Size,
+    func: Box<dyn Fn(BackendCoord) -> Marker>,
+}
+
+impl<I: Iterator + Clone, Size: SizeDesc, Marker> DottedLineSeries<I, Size, Marker> {
+    /// Create a new line series from
+    /// - `points`: The iterator of the points
+    /// - `shift`: The shift of the first marker
+    /// - `spacing`: The spacing between markers
+    /// - `func`: The marker function
+    /// - returns the created element
+    pub fn new<I0, F>(points: I0, shift: Size, spacing: Size, func: F) -> Self
+    where
+        I0: IntoIterator<IntoIter = I>,
+        F: Fn(BackendCoord) -> Marker + 'static,
+    {
+        Self {
+            points: points.into_iter(),
+            shift,
+            spacing,
+            func: Box::new(func),
+        }
+    }
+}
+
+impl<I: Iterator + Clone, Size: SizeDesc, Marker: 'static> IntoIterator
+    for DottedLineSeries<I, Size, Marker>
+{
+    type Item = DottedPathElement<I, Size, Marker>;
+    type IntoIter = std::iter::Once<Self::Item>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        std::iter::once(DottedPathElement::new(
+            self.points,
+            self.shift,
+            self.spacing,
+            self.func,
+        ))
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::prelude::*;
@@ -102,8 +191,8 @@ mod test {
             });
 
             m.drop_check(|b| {
-                assert_eq!(b.num_draw_path_call, 1);
-                assert_eq!(b.draw_count, 1);
+                assert_eq!(b.num_draw_path_call, 8);
+                assert_eq!(b.draw_count, 27);
             });
         });
 
@@ -116,6 +205,18 @@ mod test {
                 (0..100).map(|x| (x, x)),
                 Into::<ShapeStyle>::into(RED).stroke_width(3),
             ))
+            .expect("Drawing Error");
+        chart
+            .draw_series(DashedLineSeries::new(
+                (0..=50).map(|x| (0, x)),
+                10,
+                5,
+                Into::<ShapeStyle>::into(RED).stroke_width(3),
+            ))
+            .expect("Drawing Error");
+        let mk_f = |c| Circle::new(c, 3, Into::<ShapeStyle>::into(RED).filled());
+        chart
+            .draw_series(DottedLineSeries::new((0..=50).map(|x| (x, 0)), 5, 5, mk_f))
             .expect("Drawing Error");
     }
 }

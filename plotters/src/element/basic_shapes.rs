@@ -2,6 +2,16 @@ use super::{Drawable, PointCollection};
 use crate::style::{Color, ShapeStyle, SizeDesc};
 use plotters_backend::{BackendCoord, DrawingBackend, DrawingErrorKind};
 
+#[inline]
+fn to_i((x, y): (f32, f32)) -> (i32, i32) {
+    (x.round() as i32, y.round() as i32)
+}
+
+#[inline]
+fn to_f((x, y): (i32, i32)) -> (f32, f32) {
+    (x as f32, y as f32)
+}
+
 /**
 An element representing a single pixel.
 
@@ -127,6 +137,254 @@ fn test_path_element() {
     da.draw(&PathElement::new(
         vec![(100, 101), (105, 107), (150, 157)],
         Into::<ShapeStyle>::into(BLUE).stroke_width(5),
+    ))
+    .expect("Drawing Failure");
+}
+
+/// An element of a series of connected lines in dash style.
+///
+/// It's similar to [`PathElement`] but has a dash style.
+pub struct DashedPathElement<I: Iterator + Clone, Size: SizeDesc> {
+    points: I,
+    size: Size,
+    spacing: Size,
+    style: ShapeStyle,
+}
+
+impl<I: Iterator + Clone, Size: SizeDesc> DashedPathElement<I, Size> {
+    /// Create a new path
+    /// - `points`: The iterator of the points
+    /// - `size`: The dash size
+    /// - `spacing`: The dash-to-dash spacing (gap size)
+    /// - `style`: The shape style
+    /// - returns the created element
+    pub fn new<I0, S>(points: I0, size: Size, spacing: Size, style: S) -> Self
+    where
+        I0: IntoIterator<IntoIter = I>,
+        S: Into<ShapeStyle>,
+    {
+        Self {
+            points: points.into_iter(),
+            size,
+            spacing,
+            style: style.into(),
+        }
+    }
+}
+
+impl<'a, I: Iterator + Clone, Size: SizeDesc> PointCollection<'a, I::Item>
+    for &'a DashedPathElement<I, Size>
+{
+    type Point = I::Item;
+    type IntoIter = I;
+    fn point_iter(self) -> Self::IntoIter {
+        self.points.clone()
+    }
+}
+
+impl<I0: Iterator + Clone, Size: SizeDesc, DB: DrawingBackend> Drawable<DB>
+    for DashedPathElement<I0, Size>
+{
+    fn draw<I: Iterator<Item = BackendCoord>>(
+        &self,
+        mut points: I,
+        backend: &mut DB,
+        ps: (u32, u32),
+    ) -> Result<(), DrawingErrorKind<DB::ErrorType>> {
+        let mut start = match points.next() {
+            Some(c) => to_f(c),
+            None => return Ok(()),
+        };
+        let size = self.size.in_pixels(&ps).max(0) as f32;
+        if size == 0. {
+            return Ok(());
+        }
+        let spacing = self.spacing.in_pixels(&ps).max(0) as f32;
+        let mut dist = 0.;
+        let mut is_solid = true;
+        let mut queue = vec![to_i(start)];
+        for curr in points {
+            let end = to_f(curr);
+            // Loop for solid and spacing
+            while start != end {
+                let (dx, dy) = (end.0 - start.0, end.1 - start.1);
+                let d = dx.hypot(dy);
+                let size = if is_solid { size } else { spacing };
+                let left = size - dist;
+                // Set next point to `start`
+                if left < d {
+                    let t = left / d;
+                    start = (start.0 + dx * t, start.1 + dy * t);
+                    dist += left;
+                } else {
+                    start = end;
+                    dist += d;
+                }
+                // Draw if needed
+                if is_solid {
+                    queue.push(to_i(start));
+                }
+                if size <= dist {
+                    if is_solid {
+                        backend.draw_path(queue.drain(..), &self.style)?;
+                    } else {
+                        queue.push(to_i(start));
+                    }
+                    dist = 0.;
+                    is_solid = !is_solid;
+                }
+            }
+        }
+        if queue.len() > 1 {
+            backend.draw_path(queue, &self.style)?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_dashed_path_element() {
+    use crate::prelude::*;
+    let check_list = std::cell::RefCell::new(vec![
+        vec![(100, 100), (100, 103), (100, 105)],
+        vec![(100, 107), (100, 112)],
+        vec![(100, 114), (100, 119)],
+        vec![(100, 119), (100, 120)],
+    ]);
+    let da = crate::create_mocked_drawing_area(300, 300, |m| {
+        m.check_draw_path(move |c, s, path| {
+            assert_eq!(c, BLUE.to_rgba());
+            assert_eq!(s, 7);
+            assert_eq!(path, check_list.borrow_mut().remove(0));
+        });
+        m.drop_check(|b| {
+            assert_eq!(b.num_draw_path_call, 3);
+            assert_eq!(b.draw_count, 3);
+        });
+    });
+    da.draw(&DashedPathElement::new(
+        vec![(100, 100), (100, 103), (100, 120)],
+        5.,
+        2.,
+        BLUE.stroke_width(7),
+    ))
+    .expect("Drawing Failure");
+}
+
+/// An element of a series of connected lines in dot style for any markers.
+///
+/// It's similar to [`PathElement`] but use a marker function to draw markers with spacing.
+pub struct DottedPathElement<I: Iterator + Clone, Size: SizeDesc, Marker> {
+    points: I,
+    shift: Size,
+    spacing: Size,
+    func: Box<dyn Fn(BackendCoord) -> Marker>,
+}
+
+impl<I: Iterator + Clone, Size: SizeDesc, Marker> DottedPathElement<I, Size, Marker> {
+    /// Create a new path
+    /// - `points`: The iterator of the points
+    /// - `shift`: The shift of the first marker
+    /// - `spacing`: The spacing between markers
+    /// - `func`: The marker function
+    /// - returns the created element
+    pub fn new<I0, F>(points: I0, shift: Size, spacing: Size, func: F) -> Self
+    where
+        I0: IntoIterator<IntoIter = I>,
+        F: Fn(BackendCoord) -> Marker + 'static,
+    {
+        Self {
+            points: points.into_iter(),
+            shift,
+            spacing,
+            func: Box::new(func),
+        }
+    }
+}
+
+impl<'a, I: Iterator + Clone, Size: SizeDesc, Marker> PointCollection<'a, I::Item>
+    for &'a DottedPathElement<I, Size, Marker>
+{
+    type Point = I::Item;
+    type IntoIter = I;
+    fn point_iter(self) -> Self::IntoIter {
+        self.points.clone()
+    }
+}
+
+impl<I0, Size, DB, Marker> Drawable<DB> for DottedPathElement<I0, Size, Marker>
+where
+    I0: Iterator + Clone,
+    Size: SizeDesc,
+    DB: DrawingBackend,
+    Marker: crate::element::IntoDynElement<'static, DB, BackendCoord>,
+{
+    fn draw<I: Iterator<Item = BackendCoord>>(
+        &self,
+        mut points: I,
+        backend: &mut DB,
+        ps: (u32, u32),
+    ) -> Result<(), DrawingErrorKind<DB::ErrorType>> {
+        let mut shift = self.shift.in_pixels(&ps).max(0) as f32;
+        let mut start = match points.next() {
+            Some(start_i) => {
+                // Draw the first marker if no shift
+                if shift == 0. {
+                    let mk = (self.func)(start_i).into_dyn();
+                    mk.draw(mk.point_iter().iter().copied(), backend, ps)?;
+                }
+                to_f(start_i)
+            }
+            None => return Ok(()),
+        };
+        let spacing = self.spacing.in_pixels(&ps).max(0) as f32;
+        let mut dist = 0.;
+        for curr in points {
+            let end = to_f(curr);
+            // Loop for spacing
+            while start != end {
+                let (dx, dy) = (end.0 - start.0, end.1 - start.1);
+                let d = dx.hypot(dy);
+                let spacing = if shift == 0. { spacing } else { shift };
+                let left = spacing - dist;
+                // Set next point to `start`
+                if left < d {
+                    let t = left / d;
+                    start = (start.0 + dx * t, start.1 + dy * t);
+                    dist += left;
+                } else {
+                    start = end;
+                    dist += d;
+                }
+                // Draw if needed
+                if spacing <= dist {
+                    let mk = (self.func)(to_i(start)).into_dyn();
+                    mk.draw(mk.point_iter().iter().copied(), backend, ps)?;
+                    shift = 0.;
+                    dist = 0.;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn test_dotted_path_element() {
+    use crate::prelude::*;
+    let da = crate::create_mocked_drawing_area(300, 300, |m| {
+        m.drop_check(|b| {
+            assert_eq!(b.num_draw_path_call, 0);
+            assert_eq!(b.draw_count, 7);
+        });
+    });
+    da.draw(&DottedPathElement::new(
+        vec![(100, 100), (105, 105), (150, 150)],
+        5,
+        10,
+        |c| Circle::new(c, 5, Into::<ShapeStyle>::into(RED).filled()),
     ))
     .expect("Drawing Failure");
 }
